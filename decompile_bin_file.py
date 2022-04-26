@@ -7,8 +7,6 @@ import pickle
 
 from tqdm import tqdm
 
-import yaml
-
 
 def find_all_bin_files(
     inpath: str,
@@ -841,7 +839,7 @@ def decompile_and_export_all_strings(
         entry_decompile_result_dir = os.path.join(decompile_result_dir, rel_parent)
         decompile_result_filepath = os.path.join(entry_decompile_result_dir, decompile_result_filename)
 
-        string_log_filename = f'{filename}.yaml'
+        string_log_filename = f'{filename}.tsv'
         entry_string_log_dir = os.path.join(string_log_dir, rel_parent)
         string_log_filepath = os.path.join(entry_string_log_dir, string_log_filename)
 
@@ -885,7 +883,6 @@ def decompile_and_export_all_strings(
                         try:
                             string_log['decoded_string'] = string_content_bs_list[i].decode('cp932')
                             string_log['original_bytes_length'] = len(string_content_bs_list[i])
-                            string_log['unicode_string_length'] = len(string_log['decoded_string'])
                         except Exception as decode_exception:
                             stack_trace = traceback.format_exc()
                             string_log['stack_trace'] = stack_trace
@@ -893,30 +890,46 @@ def decompile_and_export_all_strings(
 
                         string_log_list.append(string_log)
 
-                    log_obj = make_obj_json_friendly(string_log_list)
-                    del string_log_list
+                    # export to tsv
+                    # format (instruction_index, argument_index, unicode_string_length, python_string_quote, repr_decoded_string_with_quote_removed)
 
-                    yaml_string = yaml.dump(
-                        log_obj,
-                        allow_unicode=True,
-                    )
+                    if not os.path.exists(entry_string_log_dir):
+                        os.makedirs(entry_string_log_dir)
+                    with open(string_log_filepath, 'wb') as outfile:
+                        # write the header
+                        header_str = '\t'.join([
+                            'instruction_index',
+                            'argument_index',
+                            'unicode_string_length',
+                            'python_string_quote',
+                            'repr_decoded_string_with_quote_removed',
+                        ])
 
-                    del log_obj
+                        outfile.write(header_str.encode('utf-8'))
+                        outfile.write(b'\n')
 
-                    yaml_content_bs = yaml_string.encode('utf-8')
-                    del yaml_string
+                        for string_log in tqdm(string_log_list, leave=False, desc=f'Writing {string_log_filepath}'):
+                            if 'decoded_string' not in string_log:
+                                continue
 
-                    if os.path.exists(string_log_filepath):
-                        original_bs = open(string_log_filepath, 'rb').read()
-                        if original_bs != yaml_content_bs:
-                            with open(string_log_filepath, 'wb') as outfile:
-                                outfile.write(yaml_content_bs)
-                    else:
-                        if not os.path.exists(entry_string_log_dir):
-                            os.makedirs(entry_string_log_dir)
-                        with open(string_log_filepath, 'wb') as outfile:
-                            outfile.write(yaml_content_bs)
-                    del yaml_content_bs
+                            decoded_string = string_log['decoded_string']
+                            unicode_string_length = len(decoded_string)
+                            if unicode_string_length == 0:
+                                continue
+
+                            repr_decoded_string = repr(string_log['decoded_string'])
+                            quote_char = repr_decoded_string[0]
+                            repr_decoded_string_with_quote_removed = repr_decoded_string[1:-1]
+                            line_str = '\t'.join([
+                                str(string_log['instruction_index']),
+                                str(string_log['argument_index']),
+                                str(unicode_string_length),
+                                quote_char,
+                                repr_decoded_string_with_quote_removed,
+                            ])
+
+                            outfile.write(line_str.encode('utf-8'))
+                            outfile.write(b'\n')
         except Exception as ex:
             print(bin_filepath)
             print(ex)
