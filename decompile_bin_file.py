@@ -2,6 +2,12 @@ import os
 import io
 import argparse
 import struct
+import traceback
+import pickle
+
+from tqdm import tqdm
+
+import yaml
 
 
 def find_all_bin_files(
@@ -777,8 +783,161 @@ def parse_instruction(
     }
 
 
+def find_all_instructions_with_string_argument(
+    instruction_list: list,
+):
+    retval = []
+    for instruction_index in range(len(instruction_list)):
+        instruction_info = instruction_list[instruction_index]
+        for argument_index in range(len(instruction_info['argument_list'])):
+            argument = instruction_info['argument_list'][argument_index]
+            if argument['type'] == ARGUMENT_STRING_TYPE:
+                retval.append((instruction_index, argument_index))
+    return retval
+
+
+def get_all_strings_data_from_find_results(
+    find_results: list,
+    instruction_list: list,
+):
+    retval = []
+    for instruction_index, argument_index in find_results:
+        retval.append(instruction_list[instruction_index]['argument_list'][argument_index]['string_bs'])
+    return retval
+
+
+def make_obj_json_friendly(obj):
+    if isinstance(obj, (int, float, str)):
+        return obj
+    elif isinstance(obj, list):
+        return [make_obj_json_friendly(x) for x in obj]
+    elif isinstance(obj, dict):
+        return {
+            make_obj_json_friendly(k): make_obj_json_friendly(v) for k, v in obj.items()
+        }
+    else:
+        return repr(obj)
+
+
+def decompile_and_export_all_strings(
+    inpath: str,
+    outpath: str,
+    force_decompile=False,
+    force_strings=False,
+):
+    bin_filepath_list = []
+    find_all_bin_files(inpath, bin_filepath_list)
+
+    decompile_result_dir = os.path.join(outpath, 'decompiled')
+    string_log_dir = os.path.join(outpath, 'strings')
+
+    pbar = tqdm(bin_filepath_list)
+    for bin_filepath in pbar:
+        pbar.set_description(f'Processing {bin_filepath}')
+        rel_path = os.path.relpath(bin_filepath, inpath)
+        rel_parent, filename = os.path.split(rel_path)
+
+        decompile_result_filename = f'{filename}.pickle'
+        entry_decompile_result_dir = os.path.join(decompile_result_dir, rel_parent)
+        decompile_result_filepath = os.path.join(entry_decompile_result_dir, decompile_result_filename)
+
+        string_log_filename = f'{filename}.yaml'
+        entry_string_log_dir = os.path.join(string_log_dir, rel_parent)
+        string_log_filepath = os.path.join(entry_string_log_dir, string_log_filename)
+
+        try:
+            if os.path.exists(decompile_result_filepath) and not force_decompile:
+                # load the decompile result
+                with open(decompile_result_filepath, 'rb') as infile:
+                    decompile_result = pickle.load(infile)
+            else:
+                decompile_result = decompile_bin_file(bin_filepath)
+                # check if the file exists and the contents are the same
+                pickle_content_bs = pickle.dumps(decompile_result)
+                if os.path.exists(decompile_result_filepath):
+                    original_bs = open(decompile_result_filepath, 'rb').read()
+                    if original_bs != pickle_content_bs:
+                        with open(decompile_result_filepath, 'wb') as outfile:
+                            outfile.write(pickle_content_bs)
+                else:
+                    # create the directory if it doesn't exist
+                    if not os.path.exists(entry_decompile_result_dir):
+                        os.makedirs(entry_decompile_result_dir)
+                    with open(decompile_result_filepath, 'wb') as outfile:
+                        outfile.write(pickle_content_bs)
+
+                del pickle_content_bs
+
+            if os.path.exists(string_log_filepath) and not force_strings:
+                pass
+            else:
+                string_content_bs_location_list = find_all_instructions_with_string_argument(decompile_result['instruction_list'])
+                if len(string_content_bs_location_list) > 0:
+                    string_content_bs_list = get_all_strings_data_from_find_results(string_content_bs_location_list, decompile_result['instruction_list'])
+
+                    string_log_list = []
+                    for i in range(len(string_content_bs_list)):
+                        string_log = {
+                            'instruction_index': string_content_bs_location_list[i][0],
+                            'argument_index': string_content_bs_location_list[i][1],
+                        }
+
+                        try:
+                            string_log['decoded_string'] = string_content_bs_list[i].decode('cp932')
+                            string_log['original_bytes_length'] = len(string_content_bs_list[i])
+                            string_log['unicode_string_length'] = len(string_log['decoded_string'])
+                        except Exception as decode_exception:
+                            stack_trace = traceback.format_exc()
+                            string_log['stack_trace'] = stack_trace
+                            string_log['exception'] = decode_exception
+
+                        string_log_list.append(string_log)
+
+                    log_obj = make_obj_json_friendly(string_log_list)
+                    del string_log_list
+
+                    yaml_string = yaml.dump(
+                        log_obj,
+                        allow_unicode=True,
+                    )
+
+                    del log_obj
+
+                    yaml_content_bs = yaml_string.encode('utf-8')
+                    del yaml_string
+
+                    if os.path.exists(string_log_filepath):
+                        original_bs = open(string_log_filepath, 'rb').read()
+                        if original_bs != yaml_content_bs:
+                            with open(string_log_filepath, 'wb') as outfile:
+                                outfile.write(yaml_content_bs)
+                    else:
+                        if not os.path.exists(entry_string_log_dir):
+                            os.makedirs(entry_string_log_dir)
+                        with open(string_log_filepath, 'wb') as outfile:
+                            outfile.write(yaml_content_bs)
+                    del yaml_content_bs
+        except Exception as ex:
+            print(bin_filepath)
+            print(ex)
+
+
 def main():
-    pass
+    parser = argparse.ArgumentParser(description='Decompile and export all strings from a directory of .bin files.')
+    parser.add_argument('inpath', help='The directory to search for .bin files.')
+    parser.add_argument('outpath', help='The directory to write the decompiled .bin files and the string logs to.')
+    parser.add_argument('--force-decompile', action='store_true', help='Force decompilation of all .bin files.')
+    parser.add_argument('--force-strings', action='store_true', help='Force exporting of all strings.')
+
+    args = parser.parse_args()
+    print('args', args)
+
+    decompile_and_export_all_strings(
+        args.inpath,
+        args.outpath,
+        force_decompile=args.force_decompile,
+        force_strings=args.force_strings,
+    )
 
 
 if __name__ == '__main__':
