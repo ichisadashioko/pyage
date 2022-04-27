@@ -51,47 +51,62 @@ def process_sys4ini(inpath):
 
     # the first 4 bytes store the length of the table of content
     stream = io.BytesIO(table_of_content_buffer)
-    table_of_content_length_bs = stream.read(4)
-    if len(table_of_content_length_bs) != 4:
-        raise Exception(f'table_of_content_length_bs length {len(table_of_content_length_bs)} != 4')
-    table_of_content_length = struct.unpack('<I', table_of_content_length_bs)[0]
+
+    ####################################################################
+    bs = stream.read(4)
+    if len(bs) != 4:
+        raise Exception(f'bs length {len(bs)} != 4')
+    number_of_alf_files = struct.unpack('<I', bs)[0]
+    ####################################################################
     # entry info data is stored after this in chunk of 256 bytes
     # the first few bytes are recognizable as the ALF file name
     # the remaining bytes are unknown for now
-    expected_all_entry_info_length = table_of_content_length * 256
+    expected_all_entry_info_length = number_of_alf_files * 256
     all_entry_info_data_bs = stream.read(expected_all_entry_info_length)
     if len(all_entry_info_data_bs) != expected_all_entry_info_length:
         raise Exception(f'len(all_entry_info_data_bs) != expected_all_entry_info_length - {len(all_entry_info_data_bs)} != {expected_all_entry_info_length}')
     # split bytes into 256 byte chunks
     all_entry_info_data_list = [
         all_entry_info_data_bs[i*256:(i+1)*256]
-        for i in range(table_of_content_length)
+        for i in range(number_of_alf_files)
     ]
 
-    # nope the first 64 bytes contains the file name with null terminator
-    # after the null terminator the remaining bytes are unknown
-    # the next 4 bytes supposedly store the archive_index
-    # the next 4 bytes supposedly store the file_index
-    # the next 4 bytes supposedly store the offset
-    # the next 4 bytes supposedly store the length
-    # I will call this structure ALF_ENTRY_INFO
-    alf_entry_info_list = []
+    alf_file_info_list = []
     for entry_info_data_bs in all_entry_info_data_list:
-        filename_data_bs = entry_info_data_bs[0:64]
-        filename_bs = get_alf_filename(filename_data_bs)
-        archive_index, file_index, offset, length = struct.unpack('<4I', entry_info_data_bs[64:64+16])
-        alf_entry_info_list.append({
-            'filename_bs': filename_bs,
-            'archive_index': archive_index,
-            'file_index': file_index,
-            'offset': offset,
-            'length': length
+        alf_filename = trim_filename_data(entry_info_data_bs)
+        alf_file_info_list.append({
+            'name': alf_filename
+        })
+    ####################################################################
+    # now we have the table of content and the list of ALF file names
+
+    # read the number of archive entries
+    bs = stream.read(4)
+    if len(bs) != 4:
+        raise Exception(f'failed to read number of archive entries len(bs) != 4 - {len(bs)}')
+    number_of_archive_entries = struct.unpack('<I', bs)[0]
+    ####################################################################
+    archive_entry_info_list = []
+    for i in range(number_of_archive_entries):
+        # the first 64 bytes contains the file name with null terminator
+        # after the null terminator the remaining bytes are unknown
+        # the next 4 bytes supposedly store the archive_index
+        # the next 4 bytes supposedly store the file_index
+        # the next 4 bytes supposedly store the offset
+        # the next 4 bytes supposedly store the length
+        bs = stream.read(80)
+        if len(bs) != 80:
+            raise Exception(f'failed to read archive entry #{i} len(bs) != 80 - {len(bs)}')
+        archive_entry_info_list.append({
+            'name': trim_filename_data(bs[0:64]),
+            'archive_index': struct.unpack('<I', bs[64:68])[0],
+            'file_index': struct.unpack('<I', bs[68:72])[0],
+            'offset': struct.unpack('<I', bs[72:76])[0],
+            'length': struct.unpack('<I', bs[76:80])[0],
         })
 
-    # TODO
 
-
-def get_alf_filename(filename_data_bs: bytes):
+def trim_filename_data(filename_data_bs: bytes):
     result = b''
     for value in filename_data_bs:
         if value == 0:
