@@ -8,7 +8,7 @@ THRESHOLD = 2
 
 def decode(infile: io.BufferedReader):
     outfile = io.BytesIO()
-    text_buffer = [32 for _ in range(SIZE_OF_RING_BUFFER + UPPER_LIMIT_OF_MATCH_LENGTH - 1)]
+    buffer = [0 for _ in range(SIZE_OF_RING_BUFFER + UPPER_LIMIT_OF_MATCH_LENGTH - 1)]
 
     # TODO rename this variable
     r = SIZE_OF_RING_BUFFER - UPPER_LIMIT_OF_MATCH_LENGTH
@@ -30,7 +30,7 @@ def decode(infile: io.BufferedReader):
                 break
             c = bs[0]
             outfile.write(bytes([c]))
-            text_buffer[r] = c
+            buffer[r] = c
             r = (r + 1) % SIZE_OF_RING_BUFFER
         else:
             bs = infile.read(2)
@@ -41,9 +41,9 @@ def decode(infile: io.BufferedReader):
             i |= (j & 0xf0) << 4
             j = (j & 0x0f) + THRESHOLD
             for k in range(j+1):
-                c = text_buffer[(i + k) % SIZE_OF_RING_BUFFER]
+                c = buffer[(i + k) % SIZE_OF_RING_BUFFER]
                 outfile.write(bytes([c]))
-                text_buffer[r] = c
+                buffer[r] = c
                 r = (r + 1) % SIZE_OF_RING_BUFFER
 
     return outfile.getvalue()
