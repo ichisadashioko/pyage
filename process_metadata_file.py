@@ -8,8 +8,7 @@ import argparse
 
 from tqdm import tqdm
 
-import lzss
-
+import shared
 
 def trim_filename_data(filename_data_bs: bytes):
     result = b''
@@ -21,30 +20,6 @@ def trim_filename_data(filename_data_bs: bytes):
     return result
 
 
-def read_section(infile: io.BufferedReader):
-    # section header format
-    # unsigned long original_length;
-    # unsigned long original_length2; // why?
-    # unsigned long length;
-    # unsigned long may be uint32
-
-    # read section header
-    section_header_bs = infile.read(12)
-    if len(section_header_bs) != 12:
-        raise Exception(f'failed to read section header len(section_header_bs) = {len(section_header_bs)}')
-
-    original_length, original_length2, length = struct.unpack('<3I', section_header_bs)
-
-    section_content_bs = infile.read(length)
-    if len(section_content_bs) != length:
-        raise Exception(f'failed to read section content len(section_content_bs) = {len(section_content_bs)} expecting {length}')
-
-    # decompress with lzss
-    decoded_section_content_bs = lzss.decode(io.BytesIO(section_content_bs))
-    if len(decoded_section_content_bs) != original_length:
-        raise Exception(f'decoded_section_content_bs length {len(decoded_section_content_bs)} not equal to original_length {original_length}')
-
-    return decoded_section_content_bs
 
 
 def process_metadata_file(inpath):
@@ -72,7 +47,7 @@ def process_metadata_file(inpath):
         infile.seek(268)
         # oh so we don't know what is in the unknown data section so different type of containers have different offsets
 
-    body_data_bs = read_section(infile)
+    body_data_bs = shared.read_lzss_section(infile)
     infile.close()
 
     # the first 4 bytes store the length of the table of content

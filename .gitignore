@@ -5,3 +5,4 @@ __pycache__
 *.pickle
 *.tsv
 references
+*.bmp
