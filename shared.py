@@ -3,6 +3,13 @@ import struct
 
 import lzss
 
+RESET_COLOR = '\033[0m'
+FG_RED = '\033[91m'
+FG_GREEN = '\033[92m'
+FG_YELLOW = '\033[93m'
+FG_BLUE = '\033[94m'
+FG_MAGENTA = '\033[95m'
+
 
 def read_lzss_section(infile: io.BufferedReader):
     # AGE engine pack data with 12 bytes header and followed by LZSS compressed data.

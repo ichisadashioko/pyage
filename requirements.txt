@@ -2,3 +2,4 @@ tqdm
 numpy
 opencv-python
 pillow
+enlighten
