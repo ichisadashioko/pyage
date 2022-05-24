@@ -38,6 +38,7 @@ def handle_single_alf_file(
                 pbar.set_description(filename)
 
                 output_filepath = os.path.join(export_config['destination'], filename)
+                # print(output_filepath)
                 if not export_config['force'] and os.path.exists(output_filepath):
                     continue
 
@@ -46,6 +47,27 @@ def handle_single_alf_file(
                     length = archive_info['length']
                     alf_infile.seek(offset)
                     agf_content_bs = alf_infile.read(length)
+
+                    parent_dir = os.path.dirname(output_filepath)
+                    if not os.path.exists(parent_dir):
+                        try:
+                            os.makedirs(parent_dir)
+                        except Exception as ex:
+                            print(f'{shared.FG_RED}ERROR: Failed to create directory: {parent_dir}{shared.RESET_COLOR}')
+                            print(stack_trace)
+                            print(ex)
+                            error_log.append({
+                                'exception': ex,
+                                'stack_trace': stack_trace,
+                                'archive_index': archive_index,
+                                'archive_info': archive_info,
+                                'export_config': export_config,
+                            })
+
+                            continue
+
+                    with open(output_filepath, mode='wb') as outfile:
+                        outfile.write(agf_content_bs)
             except Exception as ex:
                 stack_trace = traceback.format_exc()
                 print(f'{shared.FG_RED}ERROR: Error occurs while processing archive_info index {archive_index}{shared.RESET_COLOR}')
@@ -97,13 +119,14 @@ def handle_metadata_info_obj(
                 export_dir = os.path.join(metadata_parent, alf_basename)
             else:
                 export_dir = os.path.join(export_config['destination'], alf_filename)
-                if not os.path.exists(export_dir):
-                    try:
-                        os.makedirs(export_dir)
-                    except Exception as ex:
-                        print(f'{shared.FG_RED}ERROR: Failed to create directory {export_dir}{shared.RESET_COLOR}')
-                        print(ex)
-                        return
+
+            if not os.path.exists(export_dir):
+                try:
+                    os.makedirs(export_dir)
+                except Exception as ex:
+                    print(f'{shared.FG_RED}ERROR: Failed to create directory {export_dir}{shared.RESET_COLOR}')
+                    print(ex)
+                    return
 
             child_export_config = {
                 'destination': export_dir,
