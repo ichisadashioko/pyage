@@ -6,3 +6,4 @@ __pycache__
 *.tsv
 references
 *.bmp
+*tmp*

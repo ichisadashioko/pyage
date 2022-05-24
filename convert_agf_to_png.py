@@ -50,7 +50,7 @@ def convert_agf_data_to_numpy_array(
     if biCompression != 0:
         raise Exception(f'unsupported biCompression value {biCompression}')
 
-    if agf_type == AGF_TYPE_32BIT:
+    if agf_type == shared.AGF_TYPE_32BIT:
         # ACIF header format
         # 4 bytes: signature
         # 4 bytes: type

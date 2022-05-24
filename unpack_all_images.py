@@ -6,6 +6,7 @@ import struct
 import pickle
 import argparse
 import collections
+import traceback
 
 import tqdm
 import enlighten
@@ -15,70 +16,34 @@ import cv2
 
 import shared
 
+import convert_agf_to_png
+
 
 IMAGE_OUTPUT_FORMAT_LIST = ['png', 'bmp', 'jpg']
 
 
-def handle_agf_data(
-    agf_content_bs: bytes,
+def convert_rgb_to_opencv_format(
+    rgb_image: np.ndarray,
 ):
-    stream = io.BytesIO(agf_content_bs)
-
-    # AGF header
-    # 4 bytes: signature
-    # 4 bytes: type
-    # 4 bytes: unknown
-    bs = stream.read(12)
-    if len(bs) != 12:
-        raise Exception(f'AGF header is not 12 bytes long - {len(bs)}')
-
-    signature_bs = bs[0:4]
-    agf_type = struct.unpack('<I', bs[4:8])[0]
-    if agf_type not in [AGF_TYPE_24BIT, AGF_TYPE_32BIT]:
-        print('signature_bs', signature_bs)
-        print('agf_type', agf_type)
-        raise Exception(f'AGF unknown type {agf_type}')
-
-    bitmap_header_bs = shared.read_lzss_section(stream)
-    bitmap_header = shared.parse_agf_bitmap_header_bs(bitmap_header_bs)
-    image_data_bs = shared.read_lzss_section(stream)
-
-    bitmap_info_header = bitmap_header['BITMAPINFOHEADER']
-    biWidth = bitmap_info_header['biWidth']
-    biHeight = bitmap_info_header['biHeight']
-    biBitCount = bitmap_info_header['biBitCount']
-    rgb_quad_array_bs = bitmap_header['RGBQUAD']
-    tmp_np_array = np.frombuffer(rgb_quad_array_bs, dtype=np.uint8)
-    rgb_quad_array = tmp_np_array.reshape((-1, 4))
-    biClrUsed = bitmap_info_header['biClrUsed']
-
-    # getting image data directly from the array
-    image_data_bs_len = len(image_data_bs)
-    image_data_bs_len == int(biWidth * biHeight * bytes_per_pixel)
-    tmp_np_array = np.frombuffer(image_data_bs, dtype=np.uint8)
-    bgr_image = tmp_np_array.reshape((biHeight, biWidth, bytes_per_pixel))
-    reorder_bgr_image = np.flipud(bgr_image)
-    rgb_image = cv2.cvtColor(reorder_bgr_image, cv2.COLOR_BGR2RGB)
-
-    # mapping with RGBQUAD
-    image_data_array = np.array([rgb_quad_array[i] for i in image_index_array])
-
-    # merging transparency
-    acif_header_bs = stream.read(24)
-    transparency_data_bs = shared.read_lzss_section(stream)
-    number_of_channels = bgr_image.shape[2]
-
-    # merge the transparency array with the image data
-    tmp_np_array = np.frombuffer(transparency_data_bs, dtype=np.uint8)
-    transparency_array = tmp_np_array.reshape((biHeight, biWidth, 1))
-
-    bgra_image = np.concatenate((reorder_bgr_image, transparency_array), axis=2)
-    rgba_image = cv2.cvtColor(bgra_image, cv2.COLOR_BGRA2RGBA)
+    image_shape = rgb_image.shape
+    if len(image_shape) == 2:
+        # grayscale image
+        return rgb_image
+    elif len(image_shape) == 3:
+        if image_shape[2] == 3:
+            # RGB image
+            return cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+        elif image_shape[2] == 4:
+            # RGBA image
+            return cv2.cvtColor(rgb_image, cv2.COLOR_RGBA2BGRA)
+        else:
+            raise Exception(f'Unsupported image shape {image_shape}')
 
 
 def handle_single_alf_file(
     filepath: str,
     archive_list: list,
+    export_config: dict,
 ):
     with open(filepath, mode='rb') as alf_infile:
         number_of_archive_entries = len(archive_list)
@@ -90,18 +55,36 @@ def handle_single_alf_file(
 
                 filename_bs = archive_info['name']
                 filename = filename_bs.decode('ascii')
-                ext = os.path.splitext(filename)[1]
+                base_filename, ext = os.path.splitext(filename)
+
                 ext = ext.lower()
                 if not ext == '.agf':
                     enlighten_counter.update()
                     continue
 
-                offset = agf_archive_info['offset']
-                length = agf_archive_info['length']
+                output_filename = base_filename + '.' + export_config['format']
+                output_filepath = os.path.join(export_config['destination'], output_filename)
+                if not export_config['force'] and os.path.exists(output_filepath):
+                    enlighten_counter.update()
+                    continue
+
+                offset = archive_info['offset']
+                length = archive_info['length']
                 alf_infile.seek(offset)
                 agf_content_bs = alf_infile.read(length)
 
-                handle_agf_data(agf_content_bs)
+                # TODO handle BMP format with minimal processing to reduce execution time
+                rgb_image = convert_agf_to_png.convert_agf_data_to_numpy_array(
+                    agf_content_bs=agf_content_bs,
+                    force_rgb=True,
+                )
+
+                cv2_image = convert_rgb_to_opencv_format(rgb_image)
+
+                if export_config['format'] == 'png':
+                    cv2.imwrite(output_filepath, cv2_image, [cv2.IMWRITE_PNG_COMPRESSION, 9])
+                else:
+                    cv2.imwrite(output_filepath, cv2_image)
             except Exception as ex:
                 stack_trace = traceback.format_exc()
                 print(f'{shared.FG_RED}ERROR: Error occurs while processing archive_info index {archive_index}{shared.RESET_COLOR}')
@@ -113,6 +96,7 @@ def handle_single_alf_file(
 
 def handle_metadata_info_obj(
     metadata_info: dict,
+    export_config: dict,
 ):
     metadata_filepath = metadata_info['path']
     metadata_parent, metadata_filename = os.path.split(metadata_filepath)
@@ -139,10 +123,30 @@ def handle_metadata_info_obj(
         alf_filepath = os.path.join(metadata_parent, alf_filename)
 
         try:
+            if export_config['destination'] == 'sameasinput':
+                alf_basename = os.path.splitext(alf_filename)[0]
+                export_dir = os.path.join(metadata_parent, alf_basename)
+            else:
+                export_dir = os.path.join(export_config['destination'], alf_filename)
+                if not os.path.exists(export_dir):
+                    try:
+                        os.makedirs(export_dir)
+                    except Exception as ex:
+                        print(f'{shared.FG_RED}ERROR: Failed to create directory {export_dir}{shared.RESET_COLOR}')
+                        print(ex)
+                        continue
+
+            child_export_config = {
+                'destination': export_dir,
+                'format': export_config['format'],
+                'force': export_config['force'],
+            }
+
             archive_list = archive_group_dict[alf_filename_index]
             handle_single_alf_file(
                 filepath=alf_filepath,
                 archive_list=archive_list,
+                export_config=child_export_config,
             )
         except Exception as ex:
             stack_trace = traceback.format_exc()
@@ -156,15 +160,38 @@ def handle_metadata_info_obj(
 def main():
     parser = argparse.ArgumentParser(description='Unpack all images from a pickle metadata file log.')
     parser.add_argument('inpath', help='path to the pickle log')
-    parser.add_argument('outpath', help='path to the output directory')
+    parser.add_argument('outpath', nargs='?', default='sameasinput', help='path to the output directory')
     parser.add_argument('--output-format', default='png', choices=IMAGE_OUTPUT_FORMAT_LIST, help='output format')
     parser.add_argument('--force', action='store_true', help='overwrite existing files')
 
     args = parser.parse_args()
     print('args', args)
 
-    inpath = args.inpath
-    with open(inpath, mode='rb') as infile:
+    pickle_filepath = args.inpath
+    outpath = args.outpath
+
+    if not os.path.exists(pickle_filepath):
+        print(f'{shared.FG_RED}ERROR: Pickle file does not exist: {pickle_filepath}{shared.RESET_COLOR}')
+        return
+
+    if outpath != 'sameasinput':
+        outpath = os.path.abspath(outpath)
+        if not os.path.exists(outpath):
+            try:
+                os.makedirs(outpath)
+            except Exception as ex:
+                print(f'{shared.FG_RED}ERROR: Failed to create output directory: {outpath}{shared.RESET_COLOR}')
+                print(stack_trace)
+                print(ex)
+                return
+
+    EXPORT_CONFIG = {
+        'format': args.output_format,
+        'force': args.force,
+        'destination': outpath,
+    }
+
+    with open(pickle_filepath, mode='rb') as infile:
         log_list = pickle.load(infile)
 
     number_of_metadata_logs = len(log_list)
@@ -179,7 +206,10 @@ def main():
             enlighten_counter.desc = metadata_filename
 
             # long running function
-            handle_metadata_info_obj(log_list[log_index])
+            handle_metadata_info_obj(
+                log_list[log_index],
+                export_config=EXPORT_CONFIG,
+            )
         except Exception as ex:
             stack_trace = traceback.format_exc()
             print(f'{shared.FG_RED}ERROR: Error occurs while processing metadata log index {log_index}{shared.RESET_COLOR}')
