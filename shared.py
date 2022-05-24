@@ -41,7 +41,7 @@ def read_lzss_section(infile: io.BufferedReader):
         bs = infile.read(length)
         if len(bs) != length:
             raise Exception(f'failed to read section content len(bs) = {len(bs)} expecting {length}')
-        return infile.read(length)
+        return bs
 
 
 AGF_TYPE_24BIT = 1
