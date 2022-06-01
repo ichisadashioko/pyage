@@ -8,6 +8,75 @@ import numpy as np
 import cv2
 
 
+def crop_map_title_image(bgra_image: np.ndarray):
+    height, width = bgra_image.shape[:2]
+
+    for top_index in range(height):
+        is_non_transparent = False
+        for x in range(width):
+            pixel_value = bgra_image[top_index, x]
+            if pixel_value[3] > 0:
+                is_non_transparent = True
+                break
+
+        if is_non_transparent:
+            break
+
+    # continue from that line, find the first transparent pixel line
+    for bottom_index in range(top_index, height):
+        is_non_transparent = False
+        for x in range(width):
+            pixel_value = bgra_image[bottom_index, x]
+            if pixel_value[3] > 0:
+                is_non_transparent = True
+                break
+
+        if not is_non_transparent:
+            break
+
+    if top_index == bottom_index:
+        raise Exception('map title: top_index == bottom_index')
+
+    for left_index in range(width):
+        is_non_transparent = False
+        for y in range(top_index, bottom_index):
+            pixel_value = bgra_image[y, left_index]
+            if pixel_value[3] > 0:
+                is_non_transparent = True
+                break
+
+        if is_non_transparent:
+            break
+
+    for right_index in range(left_index, width):
+        is_non_transparent = False
+        for y in range(top_index, bottom_index):
+            pixel_value = bgra_image[y, right_index]
+            if pixel_value[3] > 0:
+                is_non_transparent = True
+                break
+
+        if not is_non_transparent:
+            break
+
+    if left_index == right_index:
+        raise Exception('map title: left_index == right_index')
+
+    map_title_region = {
+        'left': left_index,
+        'top': top_index,
+        'right': right_index,
+        'bottom': bottom_index,
+    }
+
+    map_title_image = bgra_image[top_index:bottom_index, left_index:right_index]
+
+    return {
+        'region': map_title_region,
+        'image': map_title_image,
+    }
+
+
 def crop_map_icon_image(bgra_image: np.ndarray):
     # split the image horizontally by 8
     # use the first image only
@@ -17,45 +86,61 @@ def crop_map_icon_image(bgra_image: np.ndarray):
     frame0_0_height, frame0_0_width = frame0_0.shape[:2]
 
     # from top to bottom, find the first non-transparent pixel line
-    top_index = None
-    for y in range(frame0_0_height):
+    for top_index in range(frame0_0_height):
         is_non_transparent = False
-        if np.any(frame0_0[y, :] != [0, 0, 0, 0]):
-            top_index = y
+        for x in range(frame0_0_width):
+            pixel_value = frame0_0[top_index, x]
+            if pixel_value[3] > 0:
+                is_non_transparent = True
+                break
+
+        if is_non_transparent:
             break
 
-    if top_index is None:
-        raise Exception('failed to find the top index')
     # continue from that line, find the first transparent pixel line
-    bottom_index = None
-    for y in range(top_index, frame0_0_height):
-        if np.all(frame0_0[y, :] == [0, 0, 0, 0]):
-            bottom_index = y
+    for bottom_index in range(top_index, frame0_0_height):
+        is_non_transparent = False
+        for x in range(frame0_0_width):
+            pixel_value = frame0_0[bottom_index, x]
+            if pixel_value[3] > 0:
+                is_non_transparent = True
+                break
+
+        if not is_non_transparent:
             break
 
-    if bottom_index is None:
-        raise Exception('failed to find the bottom index')
+    if top_index == bottom_index:
+        raise Exception('map icon frame0: top_index == bottom_index')
 
     frame0_1 = frame0_0[top_index:bottom_index, :]
     frame0_1_height, frame0_1_width = frame0_1.shape[:2]
 
-    left_index = None
-    for x in range(frame0_1_width):
-        if np.any(frame0_1[:, x] != [0, 0, 0, 0]):
-            left_index = x
+    # from left to right, find the first non-transparent pixel column
+    for left_index in range(frame0_1_width):
+        is_non_transparent = False
+        for y in range(frame0_1_height):
+            pixel_value = frame0_1[y, left_index]
+            if pixel_value[3] > 0:
+                is_non_transparent = True
+                break
+
+        if is_non_transparent:
             break
 
-    if left_index is None:
-        raise Exception('failed to find the left index')
+    # continue from that column, find the first transparent pixel column
+    for right_index in range(left_index, frame0_1_width):
+        is_non_transparent = False
+        for y in range(frame0_1_height):
+            pixel_value = frame0_1[y, right_index]
+            if pixel_value[3] > 0:
+                is_non_transparent = True
+                break
 
-    right_index = None
-    for x in range(left_index, frame0_1_width):
-        if np.all(frame0_1[:, x] == [0, 0, 0, 0]):
-            right_index = x
+        if not is_non_transparent:
             break
 
-    if right_index is None:
-        raise Exception('failed to find the right index')
+    if left_index == right_index:
+        raise Exception('map icon frame0: left_index == right_index')
 
     map_icon_frame0_region = {
         'left': left_index,
@@ -63,49 +148,30 @@ def crop_map_icon_image(bgra_image: np.ndarray):
         'right': right_index,
         'bottom': bottom_index,
     }
+
     cropped_map_icon_frame0 = frame0_1[:, left_index:right_index]
 
+    # map image can be None
     # map title image
-    # continue from the bottom of the map icon image, find the first non-transparent pixel line
-    tmp_image0 = bgra_image[bottom_index:, :]
-    tmp_image0_height, tmp_image0_width = tmp_image0.shape[:2]
 
-    top_index = None
-    for y in range(tmp_image0_height):
-        if np.any(tmp_image0[y, :] != [0, 0, 0, 0]):
-            top_index = y
-            break
-
-    if top_index is None:
-        raise Exception('failed to find the top index')
-
-    # continue from that line, find the first transparent pixel line
-    for bottom_index in range(top_index, tmp_image0_height):
-        if np.all(tmp_image0[bottom_index, :] == [0, 0, 0, 0]):
-            break
-
-    for left_index in range(tmp_image0_width):
-        if np.any(tmp_image0[:, left_index] != [0, 0, 0, 0]):
-            break
-
-    for right_index in range(left_index, tmp_image0_width):
-        if np.all(tmp_image0[:, right_index] == [0, 0, 0, 0]):
-            break
-
-    map_title_region = {
-        'left': left_index,
-        'top': top_index,
-        'right': right_index,
-        'bottom': bottom_index,
-    }
-
-    cropped_map_title = tmp_image0[top_index:bottom_index, left_index:right_index]
+    map_title_image = None
+    map_title_image_region = None
+    try:
+        # continue from the bottom of the map icon image, find the first non-transparent pixel line
+        tmp_image0 = bgra_image[bottom_index:, :]
+        retval = crop_map_title_image(tmp_image0)
+        map_title_image = retval['image']
+        map_title_image_region = retval['region']
+    except Exception as ex:
+        stacktrace = traceback.format_exc()
+        print(ex)
+        print(stacktrace)
 
     return {
         'map_icon_frame0_region': map_icon_frame0_region,
         'cropped_map_icon_frame0': cropped_map_icon_frame0,
-        'map_title_region': map_title_region,
-        'cropped_map_title': cropped_map_title,
+        'map_title_region': map_title_image_region,
+        'map_title_image': map_title_image,
     }
 
 
@@ -155,11 +221,12 @@ def main():
                 )
 
             if not os.path.exists(map_title_filepath):
-                cv2.imwrite(
-                    map_title_filepath,
-                    retval['cropped_map_title'],
-                    [cv2.IMWRITE_PNG_COMPRESSION, 9],
-                )
+                if retval['map_title_image'] is not None:
+                    cv2.imwrite(
+                        map_title_filepath,
+                        retval['map_title_image'],
+                        [cv2.IMWRITE_PNG_COMPRESSION, 9],
+                    )
 
         except Exception as ex:
             stacktrace = traceback.format_exc()
