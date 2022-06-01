@@ -11,6 +11,20 @@ import cv2
 def crop_map_title_image(bgra_image: np.ndarray):
     height, width = bgra_image.shape[:2]
 
+    bottom_index = height
+    while bottom_index > 0:
+        bottom_index -= 1
+
+        is_non_transparent = False
+        for x in range(width):
+            pixel_value = bgra_image[bottom_index, x]
+            if pixel_value[3] > 0:
+                is_non_transparent = True
+                break
+
+        if not is_non_transparent:
+            break
+
     for top_index in range(height):
         is_non_transparent = False
         for x in range(width):
@@ -20,18 +34,6 @@ def crop_map_title_image(bgra_image: np.ndarray):
                 break
 
         if is_non_transparent:
-            break
-
-    # continue from that line, find the first transparent pixel line
-    for bottom_index in range(top_index, height):
-        is_non_transparent = False
-        for x in range(width):
-            pixel_value = bgra_image[bottom_index, x]
-            if pixel_value[3] > 0:
-                is_non_transparent = True
-                break
-
-        if not is_non_transparent:
             break
 
     if top_index == bottom_index:
